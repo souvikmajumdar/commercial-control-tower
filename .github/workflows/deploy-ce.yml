@@ -45,35 +45,28 @@ jobs:
           ibmcloud cr region-set "$IBM_REGION"
           ibmcloud cr login
 
-      # ICR with IAM enforcement rejects raw API keys for Docker auth mid-push.
-      # ibmcloud cr login writes a short-lived IAM bearer token to the host
-      # Docker config. We extract that token and use it with docker/login-action
-      # so buildx inherits a valid IAM token (not the raw API key).
-      - name: Extract ICR token for buildx
-        id: icr-token
-        run: |
-          TOKEN=$(ibmcloud iam oauth-tokens --output json | python3 -c \
-            "import json,sys; print(json.load(sys.stdin)['iam_token'].split(' ')[1])")
-          echo "::add-mask::$TOKEN"
-          echo "token=$TOKEN" >> "$GITHUB_OUTPUT"
-
-      # Login BEFORE Buildx so setup-buildx-action copies credentials into
-      # the BuildKit container at startup.
-      - name: Log in to ICR (buildx context)
+      # docker/login-action writes ICR credentials into the host Docker config.
+      # ibmcloud cr login is kept above for the CE CLI steps; this step gives
+      # the host daemon (and therefore the docker driver below) its own token.
+      - name: Log in to ICR
         uses: docker/login-action@v3
         with:
           registry: ${{ env.ICR_HOST }}
-          username: iambearer
-          password: ${{ steps.icr-token.outputs.token }}
+          username: iamapikey
+          password: ${{ secrets.IBMCLOUD_API_KEY }}
 
-      - name: Set up Docker Buildx
+      # Use the host Docker daemon driver instead of docker-container.
+      # The docker-container driver isolates BuildKit in its own container and
+      # loses credentials mid-push on ICR with IAM enforcement (moby/buildkit#4111).
+      # The docker driver runs in-process with the host daemon and shares its
+      # credential store for the full push lifecycle.
+      # Trade-off: type=gha layer cache is not supported by the docker driver;
+      # cache steps are removed. Re-add cache using a registry backend if needed.
+      - name: Set up Docker Buildx (docker driver)
         uses: docker/setup-buildx-action@v3
+        with:
+          driver: docker
 
-      # Layer cache scoped to the backend image to avoid cache poisoning from
-      # the frontend job.
-      # provenance=false disables the OCI attestation manifest. Without it,
-      # BuildKit emits extra HEAD blob-probe requests that ICR rejects with 401
-      # when IAM policy enforcement is enabled (even with valid credentials).
       - name: Build and push backend image
         uses: docker/build-push-action@v6
         with:
@@ -84,8 +77,6 @@ jobs:
           tags: ${{ env.ICR_HOST }}/${{ secrets.ICR_NAMESPACE }}/${{ env.BACKEND_IMAGE }}:latest
           build-args: |
             REQUIREMENTS_FILE=requirements-ce.txt
-          cache-from: type=gha,scope=backend
-          cache-to: type=gha,mode=max,scope=backend
 
       - name: Deploy backend to Code Engine
         run: |
@@ -163,28 +154,20 @@ jobs:
           ibmcloud cr region-set "$IBM_REGION"
           ibmcloud cr login
 
-      # Same token extraction fix as backend job.
-      - name: Extract ICR token for buildx
-        id: icr-token
-        run: |
-          TOKEN=$(ibmcloud iam oauth-tokens --output json | python3 -c \
-            "import json,sys; print(json.load(sys.stdin)['iam_token'].split(' ')[1])")
-          echo "::add-mask::$TOKEN"
-          echo "token=$TOKEN" >> "$GITHUB_OUTPUT"
-
-      - name: Log in to ICR (buildx context)
+      # Same docker driver fix as backend job.
+      - name: Log in to ICR
         uses: docker/login-action@v3
         with:
           registry: ${{ env.ICR_HOST }}
-          username: iambearer
-          password: ${{ steps.icr-token.outputs.token }}
+          username: iamapikey
+          password: ${{ secrets.IBMCLOUD_API_KEY }}
 
-      - name: Set up Docker Buildx
+      - name: Set up Docker Buildx (docker driver)
         uses: docker/setup-buildx-action@v3
+        with:
+          driver: docker
 
       # NGINX_BACKEND_URL is the live URL from the backend job output.
-      # Layer cache scoped to frontend to keep it separate from backend cache.
-      # provenance=false - same ICR IAM HEAD probe fix as backend job.
       - name: Build and push frontend image
         uses: docker/build-push-action@v6
         with:
@@ -195,8 +178,6 @@ jobs:
           tags: ${{ env.ICR_HOST }}/${{ secrets.ICR_NAMESPACE }}/${{ env.FRONTEND_IMAGE }}:latest
           build-args: |
             NGINX_BACKEND_URL=${{ needs.backend.outputs.backend_url }}
-          cache-from: type=gha,scope=frontend
-          cache-to: type=gha,mode=max,scope=frontend
 
       - name: Deploy frontend to Code Engine
         run: |
