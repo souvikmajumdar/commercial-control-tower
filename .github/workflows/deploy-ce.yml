@@ -60,12 +60,16 @@ jobs:
 
       # Layer cache scoped to the backend image to avoid cache poisoning from
       # the frontend job.
+      # provenance=false disables the OCI attestation manifest. Without it,
+      # BuildKit emits extra HEAD blob-probe requests that ICR rejects with 401
+      # when IAM policy enforcement is enabled (even with valid credentials).
       - name: Build and push backend image
         uses: docker/build-push-action@v6
         with:
           context: ./backend
           file: ./backend/Dockerfile
           push: true
+          provenance: false
           tags: ${{ env.ICR_HOST }}/${{ secrets.ICR_NAMESPACE }}/${{ env.BACKEND_IMAGE }}:latest
           build-args: |
             REQUIREMENTS_FILE=requirements-ce.txt
@@ -161,12 +165,14 @@ jobs:
 
       # NGINX_BACKEND_URL is the live URL from the backend job output.
       # Layer cache scoped to frontend to keep it separate from backend cache.
+      # provenance=false - same ICR IAM HEAD probe fix as backend job.
       - name: Build and push frontend image
         uses: docker/build-push-action@v6
         with:
           context: ./frontend
           file: ./frontend/Dockerfile.ce
           push: true
+          provenance: false
           tags: ${{ env.ICR_HOST }}/${{ secrets.ICR_NAMESPACE }}/${{ env.FRONTEND_IMAGE }}:latest
           build-args: |
             NGINX_BACKEND_URL=${{ needs.backend.outputs.backend_url }}
