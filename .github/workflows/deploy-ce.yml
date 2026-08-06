@@ -42,6 +42,11 @@ jobs:
           ibmcloud login \
             --apikey "${{ secrets.IBMCLOUD_API_KEY }}" \
             -r "$IBM_REGION"
+          # ibmcloud login without -g leaves no resource group targeted.
+          # ibmcloud ce project select requires a resource group context.
+          # ibmcloud target -g works with the service ID key where login -g does not
+          # (login -g requires name-resolution access the service ID lacks - Issue 10).
+          ibmcloud target -g "${{ secrets.RG_NAME }}"
           ibmcloud cr region-set "$IBM_REGION"
           ibmcloud cr login
 
@@ -151,6 +156,8 @@ jobs:
           ibmcloud login \
             --apikey "${{ secrets.IBMCLOUD_API_KEY }}" \
             -r "$IBM_REGION"
+          # Same resource group target fix as backend job.
+          ibmcloud target -g "${{ secrets.RG_NAME }}"
           ibmcloud cr region-set "$IBM_REGION"
           ibmcloud cr login
 
