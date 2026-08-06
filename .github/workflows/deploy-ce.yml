@@ -126,11 +126,11 @@ jobs:
       - name: Get backend URL (output for frontend job)
         id: get-url
         run: |
-          BACKEND_URL=$(ibmcloud ce application get \
-            --name "${{ secrets.BACKEND_APP_NAME }}" \
-            --output url 2>/dev/null | tail -1)
-          echo "backend_url=$BACKEND_URL" >> "$GITHUB_OUTPUT"
-          echo "Backend URL for frontend build: $BACKEND_URL"
+          # Use the known stable CE URL from secrets rather than a CLI lookup.
+          # ibmcloud ce application get --output url requires CE Reader role which
+          # the service ID does not have, returning empty and breaking the nginx build.
+          echo "backend_url=${{ secrets.BACKEND_CE_URL }}" >> "$GITHUB_OUTPUT"
+          echo "Backend URL for frontend build: ${{ secrets.BACKEND_CE_URL }}"
 
   # ── Frontend: build, push, deploy ───────────────────────────────────────────
   frontend:
