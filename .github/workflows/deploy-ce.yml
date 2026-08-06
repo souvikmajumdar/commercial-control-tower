@@ -100,7 +100,8 @@ jobs:
             --env COPILOT_ENABLED=true \
             --env OPENAI_MODEL=gpt-4o-mini \
             --env ALLOWED_ORIGINS="https://control-tower-frontend.${{ secrets.CE_SUBDOMAIN }}.us-south.codeengine.appdomain.cloud,http://localhost:5173" \
-            --wait
+            --wait \
+            --wait-timeout 600
 
       - name: Health-check backend (retry loop)
         run: |
@@ -189,7 +190,8 @@ jobs:
             --name "${{ secrets.FRONTEND_APP_NAME }}" \
             --image "$ICR_HOST/${{ secrets.ICR_NAMESPACE }}/$FRONTEND_IMAGE:latest" \
             --registry-secret icr-secret \
-            --wait
+            --wait \
+            --wait-timeout 600
 
       - name: Health-check frontend (retry loop)
         run: |
