@@ -15,17 +15,30 @@ env:
   # IBM Cloud region and registry
   IBM_REGION: us-south
   ICR_HOST: us.icr.io
-  # Image names (namespace injected at runtime from secret ICR_NAMESPACE)
+
+  # Non-sensitive configuration values (moved out of GitHub secrets for visibility)
+  RG_NAME: marriott-poc
+  ICR_NAMESPACE: marriott-poc
+  CE_PROJECT: marriott-poc
+  CE_SUBDOMAIN: 2cz4z9e2j76q
+  BACKEND_APP_NAME: control-tower-backend
+  FRONTEND_APP_NAME: control-tower-frontend
+
+  # Backend URL used as the nginx proxy_pass target in the frontend image.
+  # NOTE: this must NOT be passed through $GITHUB_OUTPUT - GHA silently blanks
+  # any output variable whose value matches a GitHub secret (Issue #17).
+  # Reference this env var directly wherever the URL is needed.
+  BACKEND_CE_URL: https://control-tower-backend.2cz4z9e2j76q.us-south.codeengine.appdomain.cloud
+
+  # Image names in ICR
   BACKEND_IMAGE: control-tower-backend
   FRONTEND_IMAGE: control-tower-frontend
 
 jobs:
   # ── Backend: build, push, deploy ────────────────────────────────────────────
   backend:
-    name: Backend — build & deploy
+    name: Backend - build & deploy
     runs-on: ubuntu-latest
-    outputs:
-      backend_url: ${{ steps.get-url.outputs.backend_url }}
 
     steps:
       - name: Checkout
@@ -42,7 +55,7 @@ jobs:
           ibmcloud login \
             --apikey "${{ secrets.IBMCLOUD_API_KEY }}" \
             -r "$IBM_REGION"
-          ibmcloud target -g "${{ secrets.RG_NAME }}"
+          ibmcloud target -g "$RG_NAME"
           ibmcloud cr region-set "$IBM_REGION"
           ibmcloud cr login
 
@@ -75,13 +88,13 @@ jobs:
           file: ./backend/Dockerfile
           push: true
           provenance: false
-          tags: ${{ env.ICR_HOST }}/${{ secrets.ICR_NAMESPACE }}/${{ env.BACKEND_IMAGE }}:latest
+          tags: ${{ env.ICR_HOST }}/${{ env.ICR_NAMESPACE }}/${{ env.BACKEND_IMAGE }}:latest
           build-args: |
             REQUIREMENTS_FILE=requirements-ce.txt
 
       - name: Deploy backend to Code Engine
         run: |
-          ibmcloud ce project select --name "${{ secrets.CE_PROJECT }}"
+          ibmcloud ce project select --name "$CE_PROJECT"
 
           # OPENAI_API_KEY is intentionally omitted here.
           # It is an application secret, not a CI/CD secret, and must be set
@@ -91,26 +104,22 @@ jobs:
           # Without it, the Copilot feature degrades gracefully (fallback mode)
           # but all other functionality is unaffected.
           ibmcloud ce application update \
-            --name "${{ secrets.BACKEND_APP_NAME }}" \
-            --image "$ICR_HOST/${{ secrets.ICR_NAMESPACE }}/$BACKEND_IMAGE:latest" \
+            --name "$BACKEND_APP_NAME" \
+            --image "$ICR_HOST/$ICR_NAMESPACE/$BACKEND_IMAGE:latest" \
             --registry-secret icr-secret \
             --env DATABASE_URL=sqlite+aiosqlite:///./hotel_control_tower.db \
             --env FORECAST_PROVIDER=baseline \
             --env TIMESFM_ENABLED=false \
             --env COPILOT_ENABLED=true \
             --env OPENAI_MODEL=gpt-4o-mini \
-            --env ALLOWED_ORIGINS="https://control-tower-frontend.${{ secrets.CE_SUBDOMAIN }}.us-south.codeengine.appdomain.cloud,http://localhost:5173" \
+            --env ALLOWED_ORIGINS="https://control-tower-frontend.$CE_SUBDOMAIN.us-south.codeengine.appdomain.cloud,http://localhost:5173" \
             --wait \
             --wait-timeout 600
 
       - name: Health-check backend (retry loop)
         run: |
-          BACKEND_URL=$(ibmcloud ce application get \
-            --name "${{ secrets.BACKEND_APP_NAME }}" \
-            --output url 2>/dev/null | tail -1)
-          echo "Backend URL: $BACKEND_URL"
           for i in $(seq 1 10); do
-            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$BACKEND_URL/api/v1/health" || echo "000")
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$BACKEND_CE_URL/api/v1/health" || echo "000")
             echo "Attempt $i: HTTP $STATUS"
             if [ "$STATUS" = "200" ]; then
               echo "Backend is healthy."
@@ -123,18 +132,9 @@ jobs:
             sleep 5
           done
 
-      - name: Get backend URL (output for frontend job)
-        id: get-url
-        run: |
-          # Use the known stable CE URL from secrets rather than a CLI lookup.
-          # ibmcloud ce application get --output url requires CE Reader role which
-          # the service ID does not have, returning empty and breaking the nginx build.
-          echo "backend_url=${{ secrets.BACKEND_CE_URL }}" >> "$GITHUB_OUTPUT"
-          echo "Backend URL for frontend build: ${{ secrets.BACKEND_CE_URL }}"
-
   # ── Frontend: build, push, deploy ───────────────────────────────────────────
   frontend:
-    name: Frontend — build & deploy
+    name: Frontend - build & deploy
     runs-on: ubuntu-latest
     needs: backend
 
@@ -153,7 +153,7 @@ jobs:
           ibmcloud login \
             --apikey "${{ secrets.IBMCLOUD_API_KEY }}" \
             -r "$IBM_REGION"
-          ibmcloud target -g "${{ secrets.RG_NAME }}"
+          ibmcloud target -g "$RG_NAME"
           ibmcloud cr region-set "$IBM_REGION"
           ibmcloud cr login
 
@@ -170,7 +170,9 @@ jobs:
         with:
           driver: docker
 
-      # NGINX_BACKEND_URL is the live URL from the backend job output.
+      # NGINX_BACKEND_URL is read from the env: block, NOT from a job output.
+      # Passing a secret through $GITHUB_OUTPUT causes GHA to silently blank the
+      # value (Issue #17). Reading it directly from env: avoids this entirely.
       - name: Build and push frontend image
         uses: docker/build-push-action@v6
         with:
@@ -178,26 +180,24 @@ jobs:
           file: ./frontend/Dockerfile.ce
           push: true
           provenance: false
-          tags: ${{ env.ICR_HOST }}/${{ secrets.ICR_NAMESPACE }}/${{ env.FRONTEND_IMAGE }}:latest
+          tags: ${{ env.ICR_HOST }}/${{ env.ICR_NAMESPACE }}/${{ env.FRONTEND_IMAGE }}:latest
           build-args: |
-            NGINX_BACKEND_URL=${{ needs.backend.outputs.backend_url }}
+            NGINX_BACKEND_URL=${{ env.BACKEND_CE_URL }}
 
       - name: Deploy frontend to Code Engine
         run: |
-          ibmcloud ce project select --name "${{ secrets.CE_PROJECT }}"
+          ibmcloud ce project select --name "$CE_PROJECT"
 
           ibmcloud ce application update \
-            --name "${{ secrets.FRONTEND_APP_NAME }}" \
-            --image "$ICR_HOST/${{ secrets.ICR_NAMESPACE }}/$FRONTEND_IMAGE:latest" \
+            --name "$FRONTEND_APP_NAME" \
+            --image "$ICR_HOST/$ICR_NAMESPACE/$FRONTEND_IMAGE:latest" \
             --registry-secret icr-secret \
             --wait \
             --wait-timeout 600
 
       - name: Health-check frontend (retry loop)
         run: |
-          FRONTEND_URL=$(ibmcloud ce application get \
-            --name "${{ secrets.FRONTEND_APP_NAME }}" \
-            --output url 2>/dev/null | tail -1)
+          FRONTEND_URL="https://$FRONTEND_APP_NAME.$CE_SUBDOMAIN.us-south.codeengine.appdomain.cloud"
           echo "Frontend URL: $FRONTEND_URL"
           for i in $(seq 1 10); do
             STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$FRONTEND_URL/" || echo "000")
@@ -206,7 +206,7 @@ jobs:
               echo "Frontend is healthy."
               echo ""
               echo "Deploy complete."
-              echo "  Backend:  ${{ needs.backend.outputs.backend_url }}"
+              echo "  Backend:  $BACKEND_CE_URL"
               echo "  Frontend: $FRONTEND_URL"
               break
             fi
