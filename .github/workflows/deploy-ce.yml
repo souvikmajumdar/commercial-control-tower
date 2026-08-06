@@ -42,6 +42,7 @@ jobs:
           ibmcloud login \
             --apikey "${{ secrets.IBMCLOUD_API_KEY }}" \
             -r "$IBM_REGION"
+          ibmcloud target -g "${{ secrets.RG_NAME }}"
           ibmcloud cr region-set "$IBM_REGION"
           ibmcloud cr login
 
@@ -80,7 +81,11 @@ jobs:
 
       - name: Deploy backend to Code Engine
         run: |
-          ibmcloud ce project select --name "${{ secrets.CE_PROJECT }}"
+          # Use --id instead of --name to bypass resource group name resolution.
+          # ibmcloud ce project select --name requires the session to have a resource
+          # group targeted, which the service ID key cannot do. --id resolves the
+          # project directly via the CE IAM policy scoped to the project GUID.
+          ibmcloud ce project select --id "${{ secrets.CE_PROJECT_ID }}"
 
           # OPENAI_API_KEY is intentionally omitted here.
           # It is an application secret, not a CI/CD secret, and must be set
@@ -151,6 +156,7 @@ jobs:
           ibmcloud login \
             --apikey "${{ secrets.IBMCLOUD_API_KEY }}" \
             -r "$IBM_REGION"
+          ibmcloud target -g "${{ secrets.RG_NAME }}"
           ibmcloud cr region-set "$IBM_REGION"
           ibmcloud cr login
 
@@ -181,7 +187,8 @@ jobs:
 
       - name: Deploy frontend to Code Engine
         run: |
-          ibmcloud ce project select --name "${{ secrets.CE_PROJECT }}"
+          # Same --id fix as backend job.
+          ibmcloud ce project select --id "${{ secrets.CE_PROJECT_ID }}"
 
           ibmcloud ce application update \
             --name "${{ secrets.FRONTEND_APP_NAME }}" \
