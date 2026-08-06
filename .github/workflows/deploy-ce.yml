@@ -42,6 +42,7 @@ jobs:
           ibmcloud login \
             --apikey "${{ secrets.IBMCLOUD_API_KEY }}" \
             -r "$IBM_REGION"
+          ibmcloud target -g "${{ secrets.RG_NAME }}"
           ibmcloud cr region-set "$IBM_REGION"
           ibmcloud cr login
 
@@ -151,6 +152,7 @@ jobs:
           ibmcloud login \
             --apikey "${{ secrets.IBMCLOUD_API_KEY }}" \
             -r "$IBM_REGION"
+          ibmcloud target -g "${{ secrets.RG_NAME }}"
           ibmcloud cr region-set "$IBM_REGION"
           ibmcloud cr login
 
